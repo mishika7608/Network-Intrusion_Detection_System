@@ -6,7 +6,7 @@ If you discover a security vulnerability in this project, **please do not open a
 
 Instead, kindly report it responsibly by emailing:
 
-📧 **noelmathews123@gmail.com**
+📧 **mishika.gh@gmail.com**
 
 We will review and respond to your report promptly. Responsible disclosure is appreciated and helps keep users safe.
 ---
