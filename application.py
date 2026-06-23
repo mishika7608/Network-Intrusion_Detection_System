@@ -1,5 +1,5 @@
 from flask_socketio import SocketIO, emit
-from flask import jsonify  # <-- Add this to existing Flask imports
+from flask import jsonify
 from flask import Flask, render_template, redirect, url_for, request, session, flash
 from random import random
 from time import sleep
@@ -54,29 +54,24 @@ def ipInfo(addr=''):
             url = 'https://ipinfo.io/json'
         else:
             url = 'https://ipinfo.io/' + addr + '/json'
-        res = urlopen(url, timeout=5)  # Added timeout
+        res = urlopen(url, timeout=5)
         data = json.load(res)
-        return data.get('country', None)  # Using get() with default
+        return data.get('country', None)
     except Exception:
         return None
 
 __author__ = 'rnids'
 
 app = Flask(__name__)
-app.config['SECRET_KEY'] = os.environ.get('FLASK_SECRET_KEY', 'secret!')  # Added env var support
+app.config['SECRET_KEY'] = os.environ.get('FLASK_SECRET_KEY', 'secret!')
 app.config['DEBUG'] = os.environ.get('FLASK_DEBUG', 'True').lower() == 'true'
 
-# Enable CORS for Flask app
 from flask_cors import CORS
 CORS(app)
 
-
-
-
-# Turn the Flask app into a SocketIO app
 socketio = SocketIO(app, async_mode=None, logger=True, engineio_logger=True, cors_allowed_origins="*")
 
-# Random result Generator Thread
+# Background sniffer state
 thread = Thread()
 thread_stop_event = Event()
 
@@ -85,7 +80,6 @@ w = csv.writer(f)
 f2 = open("input_logs.csv", 'w')
 w2 = csv.writer(f2)
 
-# Add file cleanup
 def cleanup_files():
     if not f.closed:
         f.close()
@@ -195,18 +189,26 @@ src_ip_dict = {}
 current_flows = {}
 FlowTimeout = 600
 
-# Load models
+# Models and explainers are loaded once when the Flask process starts.
 try:
     ae_scaler = joblib.load("models/preprocess_pipeline_AE_39ft.save")
     ae_model = keras.models.load_model('models/autoencoder_39ft.hdf5')
     with open('models/model.pkl', 'rb') as f:
         classifier = pickle.load(f)
-    with open('models/explainer', 'rb') as f:
-        explainer = dill.load(f)
+    try:
+        with open('models/explainer', 'rb') as f:
+            explainer = dill.load(f)
+    except Exception as e:
+        print("Warning: Could not load explainer:", e)
+        explainer = None
+
     predict_fn_rf = lambda x: classifier.predict_proba(x).astype(float)
+
 except Exception as e:
     print(f"Error loading models: {str(e)}")
     raise
+
+
 
 def clean_stale_flows():
     current_time = time.time()
@@ -220,8 +222,7 @@ def clean_stale_flows():
         classify(current_flows[flow_id].terminated())
         del current_flows[flow_id]
 
-# In application.py - modify the classify function
-
+# Converts completed flows into ML predictions and sends them to the dashboard.
 def classify(features):
     try:
         global flow_count
@@ -254,7 +255,6 @@ def classify(features):
         proba_score = [proba[0].max()]
         proba_risk = sum(list(proba[0,1:]))
         
-        # Determine risk level
         if proba_risk > 0.8:
             risk = ["<p class='risk-badge risk-very_high'>Very High</p>"]
             risk_level = "very_high"
@@ -286,22 +286,18 @@ def classify(features):
         w2.writerow(['Flow info:'] + features)
         w2.writerow(['--------------------------------------------------------------------------------------------------'])
         
-        # Create flow data dictionary with the risk_level included
         flow_data = dict(zip(cols, [flow_count] + record + classification + proba_score))
-        # Add risk level explicitly - FIXED: This was missing in original code
         flow_data['risk_level'] = risk_level
         
-        # Update the dataframe for local tracking
         flow_df.loc[len(flow_df)] = [flow_count] + record + classification + proba_score + risk
         
-        # FIXED: Improved condition to store flows - either non-benign or high/very high risk
         should_store = result[0] != 'Benign' or risk_level in ["very_high", "high"]
         
         if should_store and session.get('user_id'):
             try:
                 print(f"🔍 Saving flow #{flow_count} to Firestore: Class={result[0]}, Risk={risk_level}")
                 
-                # Clean flow data for Firestore storage
+                # Firestore cannot serialize NumPy and NaN values directly.
                 clean_flow_data = {}
                 for key, value in flow_data.items():
                     if isinstance(value, (np.integer, np.int64)):
@@ -315,11 +311,9 @@ def classify(features):
                     else:
                         clean_flow_data[key] = value
                 
-                # Get session info
                 user_id = session.get('user_id', 'anonymous')
                 session_id = session.get('session_id', 'default_session')
                 
-                # FIXED: Save to Firestore with proper data
                 flow_id = save_malicious_flow(
                     user_id=user_id,
                     session_id=session_id,
@@ -329,11 +323,8 @@ def classify(features):
                 if flow_id:
                     print(f"✅ Saved malicious flow {flow_id} (Risk: {risk_level}, Class: {result[0]})")
                     
-                    # FIXED: Also increment the session risk counter directly
-                    # This is a backup in case save_malicious_flow's counter update fails
                     increment_high_risk_count(session_id, risk_level)
                     
-                    # Update global stats more frequently for high risk flows
                     if risk_level in ["high", "very_high"] or flow_count % 3 == 0:
                         update_global_stats()
                 else:
@@ -351,7 +342,7 @@ def classify(features):
             'result': [flow_count] + feature_string + classification + proba_score + risk,
             'ips': json.loads(ip_data),
             'risk_level': risk_level,
-            'classification': classification[0]  # Use first element of classification
+            'classification': classification[0]
         }, namespace='/test')
         
         return [flow_count] + record + classification + proba_score + risk
@@ -362,6 +353,7 @@ def classify(features):
         return None
 
 def newPacket(p):
+    print("PACKET RECEIVED")
     try:
         packet = PacketInfo()
         packet.setDest(p)
@@ -425,7 +417,6 @@ def newPacket(p):
             current_flows[packet.getFwdID()] = flow
 
     except AttributeError:
-        # Not IP or TCP
         return
 
     except Exception as e:
@@ -433,13 +424,11 @@ def newPacket(p):
         traceback.print_exc()
 
 def snif_and_detect():
-    while not thread_stop_event.isSet():
-        print("Begin Sniffing".center(20, ' '))
-        clean_stale_flows()  # Added stale flow cleanup
-        sniff(prn=newPacket)
-        for f in current_flows.values():
-            classify(f.terminated())
+    print("=== SNIFFER STARTED ===")
 
+    while not thread_stop_event.isSet():
+        print("Begin Sniffing")
+        sniff(prn=newPacket, store=False)
 
 @app.route('/test-firebase', methods=['GET'])
 def test_firebase():
@@ -447,26 +436,21 @@ def test_firebase():
         if not firestore_db:
             return jsonify({"status": "error", "message": "Firestore not initialized"}), 500
 
-        # Create document reference first
         doc_ref = firestore_db.collection("connection_tests").document()
         
-        # Prepare data WITHOUT SERVER_TIMESTAMP for the response
         test_data = {
             "test": "RNIDS Connection Test",
             "status": "success",
             "document_id": doc_ref.id
         }
 
-        # Create separate data for Firestore WITH timestamp
         firestore_data = {
             **test_data,
-            "timestamp": SERVER_TIMESTAMP  # Only for Firestore
+            "timestamp": SERVER_TIMESTAMP
         }
 
-        # Write to Firestore
         doc_ref.set(firestore_data)
         
-        # Return response without the timestamp
         return jsonify({
             "status": "success",
             "data": test_data
@@ -479,17 +463,14 @@ def test_firebase():
             "solution": "Check firebase-adminsdk.json and Firestore rules"
         }), 500
 
-# Route for the landing page (default page)
+# Page and authentication routes
 @app.route('/')
 def landing():
     return render_template('landing.html')
 
-
-# Route for handling login form submission
 @app.route('/login', methods=['POST'])
 def login():
     try:
-        # Get username and password from form or JSON
         if request.is_json:
             data = request.get_json()
             username = data.get('username')
@@ -498,13 +479,10 @@ def login():
             username = request.form.get('username')
             password = request.form.get('password')
 
-        # Add debug logging to track flow
         print(f"Login attempt for username: {username}")
         
-        # Check if request is AJAX (XHR)
         is_ajax = request.headers.get('X-Requested-With') == 'XMLHttpRequest'
         
-        # Basic validation
         if not username or not password:
             error_msg = "Username and password are required"
             print(f"Login error: {error_msg}")
@@ -513,11 +491,10 @@ def login():
             flash(error_msg)
             return redirect(url_for('landing'))
             
-        # Try multiple lookup strategies
         user_data = None
         user_id = None
         
-        # Strategy 1: Check if the input is an email (has @)
+        # Users can log in with either email or username.
         if '@' in username:
             print("Email format detected, trying direct document lookup...")
             user_ref = firestore_db.collection('users').document(username)
@@ -527,14 +504,12 @@ def login():
                 user_id = username
                 print(f"Found user via direct email lookup: {user_id}")
         
-        # Strategy 2: Use the get_user_by_username function
         if not user_data:
             print("Trying username lookup via query...")
             user_data, user_id = get_user_by_username(username)
             if user_data:
                 print(f"Found user via username query: {user_id}")
         
-        # Strategy 3: Try with @example.com appended if no @ in username
         if not user_data and '@' not in username:
             print("Trying email with default domain...")
             email_to_try = f"{username}@example.com"
@@ -545,13 +520,11 @@ def login():
                 user_id = email_to_try
                 print(f"Found user via default domain email: {user_id}")
         
-        # Debug output for troubleshooting
         if user_data:
             print(f"User data retrieved. Has password hash: {'password_hash' in user_data}")
         else:
             print("No user data found with provided username/email")
             
-        # Verify user exists and password matches
         if not user_data:
             error_msg = "User not found"
             print(f"Login error: {error_msg}")
@@ -560,7 +533,6 @@ def login():
             flash("Invalid username or password")
             return redirect(url_for('landing'))
             
-        # Check if password hash exists
         if 'password_hash' not in user_data:
             error_msg = "Password hash not found in user data"
             print(f"Login error: {error_msg}")
@@ -569,8 +541,11 @@ def login():
             flash("Account setup incomplete. Please contact admin.")
             return redirect(url_for('landing'))
             
-        # Verify password
+        print("Password hash:", repr(user_data.get("password_hash")))
+        print("Type:", type(user_data.get("password_hash")))
         if not verify_password(user_data.get('password_hash'), password):
+            print("Stored password_hash:", user_data.get("password_hash"))
+            print("Type:", type(user_data.get("password_hash")))
             error_msg = "Password verification failed"
             print(f"Login error: {error_msg}")
             if is_ajax:
@@ -578,10 +553,8 @@ def login():
             flash("Invalid username or password")
             return redirect(url_for('landing'))
             
-        # Authentication successful
         print(f"User {username} authenticated successfully")
         
-        # User authenticated, set up session
         session['logged_in'] = True
         session['username'] = user_data.get('username', username)
         session['user_id'] = user_id
@@ -589,7 +562,6 @@ def login():
         session['fullname'] = user_data.get('fullname', '')
         session['new_session'] = True
 
-        # Get device info
         user_agent = request.user_agent
         device_info = {
             'os': user_agent.platform if user_agent else 'Unknown',
@@ -597,19 +569,15 @@ def login():
             'ip_address': request.remote_addr or '0.0.0.0'
         }
         
-        # Create Firestore session
         session_id = create_user_session(user_id, device_info)
         if session_id:
             session['session_id'] = session_id
             print(f"Created Firestore session: {session_id}")
             
-            # Initialize global stats
-            update_global_stats()
         else:
             session['session_id'] = 'default_session'
             print("Using default session ID")
         
-        # Return appropriate response based on request format
         if is_ajax:
             return jsonify({"success": True, "redirect": url_for('capture')})
         return redirect(url_for('capture'))
@@ -624,34 +592,27 @@ def login():
         return redirect(url_for('landing'))
     
 
-# Route for the capture page (index.html)
 @app.route('/capture')
 def capture():
-    # Check if the user is logged in
     if not session.get('logged_in'):
-        return redirect(url_for('landing'))  # Redirect to landing page if not logged in
+        return redirect(url_for('landing'))
     return render_template('index.html')
 
-# Route for the signup page
 @app.route('/signup', methods=['GET', 'POST'])
 def signup():
     if request.method == 'GET':
         return render_template('signup.html')
     
-    # Check if the request is AJAX
     is_ajax = request.headers.get('X-Requested-With') == 'XMLHttpRequest'
     
     try:
-        # Get form data
         username = request.form.get('username', '').strip()
         password = request.form.get('password', '')
         email = request.form.get('email', '').strip()
         fullname = request.form.get('fullname', '').strip()
         
-        # Validation errors dictionary
         errors = {}
         
-        # Validate input
         if not username:
             errors['username'] = 'Username is required'
         if not password:
@@ -659,7 +620,6 @@ def signup():
         if not email:
             errors['email'] = 'Email is required'
         
-        # Handle validation errors
         if errors:
             if is_ajax:
                 return jsonify({"success": False, "errors": errors}), 400
@@ -667,11 +627,9 @@ def signup():
                 flash(message)
             return render_template('signup.html')
         
-        # Check if email contains @ - if not, add default domain
         if '@' not in email:
             email = f"{email}@example.com"
         
-        # Check if username already exists
         existing_user, _ = get_user_by_username(username)
         if existing_user:
             if is_ajax:
@@ -679,7 +637,6 @@ def signup():
             flash('Username already exists')
             return render_template('signup.html')
         
-        # Check if email already exists as a document ID
         user_ref = firestore_db.collection('users').document(email)
         if user_ref.get().exists:
             if is_ajax:
@@ -687,7 +644,6 @@ def signup():
             flash('Email already registered')
             return render_template('signup.html')
         
-        # Hash password
         password_hash = hash_password(password)
         if not password_hash:
             if is_ajax:
@@ -695,7 +651,6 @@ def signup():
             flash('Error creating account. Please try again.')
             return render_template('signup.html')
         
-        # Create user document
         user_data = {
             'username': username,
             'email': email,
@@ -705,13 +660,10 @@ def signup():
             'last_active': SERVER_TIMESTAMP
         }
         
-        # Save to Firestore
         user_ref.set(user_data)
         
-        # Log success
         print(f"User created: {email} with username: {username}")
         
-        # Automatically log in the user
         session['logged_in'] = True
         session['username'] = username
         session['user_id'] = email
@@ -719,12 +671,10 @@ def signup():
         session['fullname'] = fullname if fullname else username
         session['new_session'] = True
         
-        # Create session
         session_id = create_user_session(email)
         if session_id:
             session['session_id'] = session_id
         
-        # Return appropriate response
         if is_ajax:
             return jsonify({"success": True, "redirect": url_for('capture')})
         
@@ -741,7 +691,6 @@ def signup():
         flash('Error creating account. Please try again.')
         return render_template('signup.html')
 
-# Route for the detail page (Detail.html)
 @app.route('/detail')
 def detail():
     try:
@@ -796,16 +745,14 @@ def detail():
         traceback.print_exc()
         return "Error processing request", 500
 
-# Route for the profile page
 @app.route('/profile')
 def profile():
     if not session.get('logged_in'):
         return redirect(url_for('landing'))
     
-    # Fetch user details from the session or database
     username = session.get('username')
-    email = session.get('email')  # Ensure email is stored in the session during login/signup
-    fullname = session.get('fullname')  # Ensure fullname is stored in the session during signup
+    email = session.get('email')
+    fullname = session.get('fullname')
     
     return render_template('profile.html', username=username, email=email, fullname=fullname)
 
@@ -815,16 +762,13 @@ def clear_local_flows():
         return jsonify({"status": "error", "message": "Not authorized"}), 401
     return jsonify({"status": "success", "message": "Local flows cleared"})
 
-# Add this route to your application.py file
 @app.route('/debug_auth', methods=['GET'])
 def debug_auth():
     """Debug route for authentication issues (remove in production)"""
-    # Only allow on development environment
     if app.config.get('ENV') != 'development':
         return jsonify({"error": "Not available in production"}), 403
     
     try:
-        # Check if a username is provided
         test_username = request.args.get('username')
         if not test_username:
             return jsonify({
@@ -832,10 +776,8 @@ def debug_auth():
                 "usage": "/debug_auth?username=your_username"
             })
         
-        # Try to find the user
         user_data, user_id = get_user_by_username(test_username)
         
-        # If not found by username, try email
         if not user_data and '@' not in test_username:
             email_to_try = f"{test_username}@example.com"
             user_ref = firestore_db.collection('users').document(email_to_try)
@@ -844,7 +786,6 @@ def debug_auth():
                 user_data = user_doc.to_dict()
                 user_id = email_to_try
         
-        # Prepare response
         if not user_data:
             return jsonify({
                 "status": "User not found",
@@ -855,7 +796,6 @@ def debug_auth():
                 ]
             })
         
-        # Return user info (redact sensitive data)
         safe_data = {
             "status": "User found",
             "username": user_data.get('username'),
@@ -880,11 +820,9 @@ def debug_auth():
 def about():
     return render_template('about.html')
 
-# Logout route
 @app.route('/logout')
 def logout():
     try:
-        # End Firestore session if exists
         if session.get('user_id') and session.get('session_id') and firestore_db:
             session_ref = firestore_db.collection('sessions').document(session['session_id'])
             session_ref.update({
@@ -894,10 +832,8 @@ def logout():
     except Exception as e:
         print(f"Error ending session: {e}")
     
-    # Clear the session
     session.clear()
     
-    # Return a response that will trigger frontend cleanup
     return redirect(url_for('landing'))
 
 @app.route('/check-session')
@@ -913,11 +849,9 @@ def check_session():
 
 @socketio.on('connect', namespace='/test')
 def test_connect():
-    # Need visibility of the global thread object
     global thread
     print('Client connected')
 
-    # Start the random result generator thread only if the thread has not been started before.
     if not thread.is_alive():
         print("Starting Thread")
         thread = socketio.start_background_task(snif_and_detect)
@@ -929,12 +863,10 @@ def test_disconnect():
     except Exception as e:
         print(f"Error in disconnect handler: {str(e)}")
 
-# Cleanup handler for when the application shuts down
 def cleanup_on_shutdown():
     try:
         thread_stop_event.set()
         cleanup_files()
-        # Clean up any remaining flows
         for flow_id in list(current_flows.keys()):
             try:
                 classify(current_flows[flow_id].terminated())
@@ -944,12 +876,13 @@ def cleanup_on_shutdown():
     except Exception as e:
         print(f"Error during shutdown cleanup: {str(e)}")
 
-# Register the cleanup handler
 atexit.register(cleanup_on_shutdown)
 
 if __name__ == '__main__':
-    try:
-        socketio.run(app)
-    except Exception as e:
-        print(f"Error starting application: {str(e)}")
-        cleanup_on_shutdown()
+    socketio.run(
+        app,
+        host='0.0.0.0',
+        port=5000,
+        debug=True,
+        allow_unsafe_werkzeug=True
+    )

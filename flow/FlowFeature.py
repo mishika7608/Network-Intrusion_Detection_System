@@ -1,4 +1,6 @@
 class FlowFeatures:
+    """Container for the numeric and metadata fields used by the ML pipeline."""
+
     def __init__(self):
         self.dest_port = 0
         self.flow_duration = 0
@@ -30,23 +32,22 @@ class FlowFeatures:
         self.fwd_packets_s = 0
 
         self.max_packet_len = 0
-        self.packet_len_mean = 0#have: 74, want 66.5
-        self.packet_len_std = 0#have: 100, want 99.00183653
-        self.packet_len_var = 0#have: 10045, want 9801.363636
+        self.packet_len_mean = 0
+        self.packet_len_std = 0
+        self.packet_len_var = 0
 
-        self.FIN_flag_count = 0 #have 1, want 0
-        self.SYN_flag_count = 0 #have 1, want 0
-        self.PSH_flag_count = 0 #have 1 want 0
+        self.FIN_flag_count = 0
+        self.SYN_flag_count = 0
+        self.PSH_flag_count = 0
         self.ACK_flag_count = 0
         self.URG_flag_count = 0
 
-        self.avg_packet_size = 0#have: 74, want 72.54545455
+        self.avg_packet_size = 0
 
         self.avg_bwd_segment_size = 0
 
-        #default to -1
         self.init_win_bytes_forward = -1
-        self.init_win_bytes_backward = -1#have: 8192, want 2053
+        self.init_win_bytes_backward = -1
 
         self.active_min = 0
 
@@ -58,7 +59,6 @@ class FlowFeatures:
         self.src = ""
         self.dest = ""
         self.src_port = 0
-        # self.dest_port = 0
         self.protocol = ''
         self.timestamp = 0
 
@@ -349,4 +349,3 @@ class FlowFeatures:
 
     def getPName(self):
         return self.p_name
-

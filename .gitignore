@@ -1,3 +1,4 @@
+serviceAccountKey.json
 venv/
 __pycache__/
 firebase_config.py
@@ -10,3 +11,4 @@ SAE.ipynb
 train_explainer.py
 train_model.py
 .git
+

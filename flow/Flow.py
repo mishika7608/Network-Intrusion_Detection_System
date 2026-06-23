@@ -66,7 +66,7 @@ class Flow:
             self.bwdPacketInfos.append(packetInfo)
 
             if self.bwd_packet_count == 0:
-                # first backward packet, do some initalising
+                # The first backward packet establishes backward-flow baselines.
                 self.flowFeatures.setBwdPacketLenMax(packetInfo.getPayloadBytes())
                 self.flowFeatures.setBwdPacketLenMin(packetInfo.getPayloadBytes())
                 self.flowFeatures.setInitWinBytesBwd(packetInfo.getWinBytes())
