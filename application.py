@@ -694,49 +694,81 @@ def signup():
 @app.route('/detail')
 def detail():
     try:
-        flow_id = request.args.get('flow_id', default=-1, type=int)
+        # Accept multiple possible query param names and formats for flow id
+        raw = (
+            request.args.get('flow_id') or
+            request.args.get('id') or
+            request.args.get('flow') or
+            request.args.get('flowid')
+        )
+
+        if raw is None:
+            return "Flow not found", 404
+
+        # Try to parse an integer from the raw value (handles 'Flow #1' etc.)
+        try:
+            flow_id = int(raw)
+        except Exception:
+            digits = ''.join(ch for ch in str(raw) if ch.isdigit())
+            if digits:
+                flow_id = int(digits)
+            else:
+                return "Flow not found", 404
+
         flow = flow_df.loc[flow_df['FlowID'] == flow_id]
-        
         if flow.empty:
             return "Flow not found", 404
-            
+
         X = [flow.values[0,1:40]]
         choosen_instance = X
-        proba_score = list(predict_fn_rf(choosen_instance))
-        risk_proba = sum(proba_score[0][1:])
-        
-        if risk_proba > 0.8:
-            risk = "Risk: <p style=\"color:red;\">Very High</p>"
-        elif risk_proba > 0.6:
-            risk = "Risk: <p style=\"color:orangered;\">High</p>"
-        elif risk_proba > 0.4:
-            risk = "Risk: <p style=\"color:orange;\">Medium</p>"
-        elif risk_proba > 0.2:
-            risk = "Risk: <p style=\"color:green;\">Low</p>"
-        else:
-            risk = "Risk: <p style=\"color:limegreen;\">Minimal</p>"
-            
-        exp = explainer.explain_instance(choosen_instance[0], predict_fn_rf, num_features=6, top_labels=1)
 
-        X_transformed = ae_scaler.transform(X)
-        reconstruct = ae_model.predict(X_transformed)
-        err = reconstruct - X_transformed
-        abs_err = np.absolute(err)
-        
-        ind_n_abs_largest = np.argpartition(abs_err, -5)[-5:]
-        col_n_largest = ae_features[ind_n_abs_largest]
-        err_n_largest = err[0][ind_n_abs_largest]
-        
-        plot_div = plotly.offline.plot({
-            "data": [
-                plotly.graph_objs.Bar(x=col_n_largest[0].tolist(), y=err_n_largest[0].tolist())
-            ]
-        }, include_plotlyjs=False, output_type='div')
+        # Default placeholders if ML artifacts are not available
+        exp_html = ''
+        plot_div = ''
+        risk = 'Risk: <p style="color:gray;">Unknown</p>'
+
+        # Compute probabilities and explainers only if available
+        try:
+            proba_score = list(predict_fn_rf(choosen_instance))
+            risk_proba = sum(proba_score[0][1:])
+
+            if risk_proba > 0.8:
+                risk = "Risk: <p style=\"color:red;\">Very High</p>"
+            elif risk_proba > 0.6:
+                risk = "Risk: <p style=\"color:orangered;\">High</p>"
+            elif risk_proba > 0.4:
+                risk = "Risk: <p style=\"color:orange;\">Medium</p>"
+            elif risk_proba > 0.2:
+                risk = "Risk: <p style=\"color:green;\">Low</p>"
+            else:
+                risk = "Risk: <p style=\"color:limegreen;\">Minimal</p>"
+
+            if explainer is not None:
+                exp = explainer.explain_instance(choosen_instance[0], predict_fn_rf, num_features=6, top_labels=1)
+                exp_html = exp.as_html()
+
+            if ae_scaler is not None and ae_model is not None:
+                X_transformed = ae_scaler.transform(X)
+                reconstruct = ae_model.predict(X_transformed)
+                err = reconstruct - X_transformed
+                abs_err = np.absolute(err)
+                ind_n_abs_largest = np.argpartition(abs_err, -5)[-5:]
+                col_n_largest = ae_features[ind_n_abs_largest]
+                err_n_largest = err[0][ind_n_abs_largest]
+                plot_div = plotly.offline.plot({
+                    "data": [
+                        plotly.graph_objs.Bar(x=col_n_largest[0].tolist(), y=err_n_largest[0].tolist())
+                    ]
+                }, include_plotlyjs=False, output_type='div')
+        except Exception as e:
+            # Don't raise a 500 for missing ML artifacts or prediction errors; log and continue
+            print(f"Detail view ML error: {e}")
+            traceback.print_exc()
 
         return render_template(
             'detail.html',
             tables=[flow.reset_index(drop=True).transpose().to_html(classes='data')],
-            exp=exp.as_html(),
+            exp=exp_html,
             ae_plot=plot_div,
             risk=risk
         )
